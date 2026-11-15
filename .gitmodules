@@ -1,3 +1,11 @@
 [submodule "libs/libtesla"]
 	path = libs/libtesla
 	url = https://github.com/WerWolv/libtesla
+
+[submodule "vendor/libtesla"]
+	path = vendor/libtesla
+	url = https://github.com/WerWolv/libtesla.git
+
+[submodule "vendor/libultrahand"]
+	path = vendor/libultrahand
+	url = https://github.com/ppkantorski/libultrahand.git
