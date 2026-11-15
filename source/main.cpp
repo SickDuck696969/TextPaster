@@ -1,56 +1,80 @@
-#define TESLA_INIT_IMPL // If you have more than one file using the tesla header, only define this in the main one
-#include <tesla.hpp>    // The Tesla Header
+#define TESLA_INIT_IMPL
+#include <tesla.hpp>
+#include "config.hpp"
+#include "texts.hpp"
+static Result launchServiceResult=0;
 
-
-class GuiTest : public tsl::Gui {
+class Shortcuts : public tsl::Gui {
 public:
-    GuiTest() { }
-
-    // Called when this Gui gets loaded to create the UI
-    // Allocate all elements on the heap. libtesla will make sure to clean them up when not needed anymore
-    virtual tsl::elm::Element* createUI() override {
-        // A OverlayFrame is the base element every overlay consists of. This will draw the default Title and Subtitle.
-        // If you need more information in the header or want to change it's look, use a HeaderOverlayFrame.
-        auto frame = new tsl::elm::OverlayFrame("Tesla Example", "v1.3.1");
-
-        // A list that can contain sub elements and handles scrolling
-        auto list = new tsl::elm::List();
-
-        // Create and add a new list item to the list
-        list->addItem(new tsl::elm::ListItem("Default List Item"));
-
-        // Add the list to the frame for it to be drawn
-        frame->setContent(list);
-
-        // Return the frame to have it become the top level element of this Gui
-        return frame;
-    }
-
-    // Called once every frame to update values
-    virtual void update() override {
-
-    }
-
-    // Called once every frame to handle inputs not handled by other UI elements
-    virtual bool handleInput(u64 keysDown, u64 keysHeld, const HidTouchState &touchPos, HidAnalogStickState joyStickPosLeft, HidAnalogStickState joyStickPosRight) override {
-        return false;   // Return true here to signal the inputs have been consumed
+    tsl::elm::Element* createUI() override {
+        auto* frame=new tsl::elm::OverlayFrame("Shortcut","TextPaster");auto* list=new tsl::elm::List;
+        for(const char* name:{"L+ZR","ZL+R","L+R","L+ZL","R+ZR","ZL+ZR"}){
+            auto* item=new tsl::elm::ListItem(name);
+            item->setClickListener([item,name](u64 keys){
+                if(!(keys&HidNpadButton_A))return false;
+                auto config=tp::read();
+                if(!config.error.empty()){item->setValue("Config error");return true;}
+                config.combo=name;
+                if(tp::write(config)){tsl::goBack();}
+                else item->setValue("Save failed");
+                return true;
+            });list->addItem(item);
+        }
+        frame->setContent(list);return frame;
     }
 };
-
-class OverlayTest : public tsl::Overlay {
+class Gui : public tsl::Gui {
+    tsl::elm::ListItem *state=nullptr,*combo=nullptr,*texts=nullptr;
+    u64 ticks=0,feedbackUntil=0;
+    void feedback(const std::string& text){state->setValue(text);feedbackUntil=armGetSystemTick()+armGetSystemTickFreq()*3;}
 public:
-                                             // libtesla already initialized fs, hid, pl, pmdmnt, hid:sys and set:sys
-    virtual void initServices() override {}  // Called at the start to initialize all services necessary for this Overlay
-    virtual void exitServices() override {}  // Callet at the end to clean up all services previously initialized
-
-    virtual void onShow() override {}    // Called before overlay wants to change from invisible to visible state
-    virtual void onHide() override {}    // Called before overlay wants to change from visible to invisible state
-
-    virtual std::unique_ptr<tsl::Gui> loadInitialGui() override {
-        return initially<GuiTest>();  // Initial Gui to load. It's possible to pass arguments to it's constructor like this
+    tsl::elm::Element* createUI() override {
+        auto* frame=new tsl::elm::OverlayFrame("TextPaster","1.1.1 | SickDuck");auto* list=new tsl::elm::List;
+        state=new tsl::elm::ListItem("Enabled",tp::running()?"On":"Off");
+        state->setClickListener([this](u64 keys){
+            if(!(keys&HidNpadButton_A))return false;
+            if(tp::running()){
+                tp::dirs();std::ofstream f(tp::StopPath);f<<"stop";f.close();feedback(f?"Stopping...":"Could not stop");
+            }else{
+                if(R_FAILED(launchServiceResult)){feedback("pm:shell unavailable");return true;}
+                auto config=tp::read();if(!config.error.empty()){feedback(config.error);return true;}
+                remove(tp::StopPath);NcmProgramLocation loc{tp::ProgramId,NcmStorageId_None};u64 pid=0;
+                Result rc=pmshellLaunchProgram(0,&loc,&pid);char msg[64];
+                snprintf(msg,sizeof(msg),R_SUCCEEDED(rc)?"Starting...":"Start failed: 0x%08X",rc);feedback(msg);
+            }return true;
+        });list->addItem(state);
+        auto initial=tp::read();auto* active=tp::entry(initial,initial.selected);
+        texts=new tsl::elm::ListItem("Saved texts",active?active->name:"None");
+        texts->setClickListener([](u64 keys){if(!(keys&HidNpadButton_A))return false;tsl::changeTo<SavedTexts>();return true;});list->addItem(texts);
+        combo=new tsl::elm::ListItem("Shortcut",tp::read().combo);
+        combo->setClickListener([](u64 keys){if(!(keys&HidNpadButton_A))return false;tsl::changeTo<Shortcuts>();return true;});list->addItem(combo);
+        frame->setContent(list);return frame;
+    }
+    void update() override {
+        if(!state)return;
+        u64 now=armGetSystemTick();
+        if(now-ticks>armGetSystemTickFreq()/2){
+            ticks=now;
+            if(now>=feedbackUntil)state->setValue(tp::running()?"On":"Off");
+            auto current=tp::read();combo->setValue(current.combo);auto* active=tp::entry(current,current.selected);texts->setValue(active?active->name:"None");
+        }
     }
 };
-
-int main(int argc, char **argv) {
-    return tsl::loop<OverlayTest>(argc, argv);
-}
+class TextPasterOverlay : public tsl::Overlay {
+    void initServices() override {
+        tsl::hlp::doWithSmSession([]{launchServiceResult=pmshellInitialize();});
+        tp::dirs();bool safeToCreate=tp::recoverAndClean();
+        struct stat st{};if(safeToCreate&&stat(tp::ConfigPath,&st)!=0)tp::write(tp::Config{});
+        // Shorten our old presets; preserve user-defined shortcuts and text.
+        auto config=tp::read();
+        if(config.error.empty()&&config.legacy)tp::write(config);
+        if(config.error.empty()&&(config.combo=="ZL+ZR+R3"||config.combo=="L+R+X"||config.combo=="ZL+ZR+Y")){
+            config.combo="L+ZR";tp::write(config);
+        }
+    }
+    void onShow() override {tp::dirs();std::ofstream flag(tp::OverlayPath);flag<<"visible";}
+    void onHide() override {remove(tp::OverlayPath);tp::cleanRuntime();}
+    void exitServices() override {remove(tp::OverlayPath);tp::cleanRuntime();if(R_SUCCEEDED(launchServiceResult))pmshellExit();}
+    std::unique_ptr<tsl::Gui> loadInitialGui() override {return initially<Gui>();}
+};
+int main(int argc,char** argv){return tsl::loop<TextPasterOverlay>(argc,argv);}

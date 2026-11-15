@@ -1,10 +1,40 @@
-
+# Build directories and release staging
 build/
+build-*/
+/dist/
+/release-*/
+/TextPaster-[0-9]*/
 
+# Compiled Switch binaries and compiler output
 *.ovl
-
 *.elf
-
 *.nacp
-
 *.nro
+*.nso
+*.nsp
+*.npdm
+*.o
+*.obj
+*.d
+*.map
+*.lst
+*.exe
+*.pdb
+*.ilk
+
+# Release archives and build logs
+/TextPaster-*.zip
+*.log
+
+# Personal config and temporary runtime files (keep config.example.ini)
+config.ini
+config.ini.bak
+config.ini.tmp
+TextPaster.runtime/
+
+# Editor and OS temporary files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
